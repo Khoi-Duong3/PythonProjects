@@ -55,6 +55,21 @@ def run_bot():
         
         voice_client.play(player, after=after_playing)
 
+    async def helper(guild_id, new_songs):
+        if guild_id not in music_queues:
+            music_queues[guild_id] = asyncio.Queue()
+        
+        old_queue = []
+
+        while not music_queues[guild_id].empty():
+            old_queue.append(await music_queues[guild_id].get())
+        
+        for song in new_songs:
+            await music_queues[guild_id].put(song)
+        
+        for song in old_queue:
+            await music_queues[guild_id].put(song)
+
 
     @client.event
     async def on_message(message):
@@ -82,12 +97,9 @@ def run_bot():
 
                 if "entries" in data:
                     await message.channel.send("Adding playlist to queue...")
-
+                    new_songs = []
                     for entry in data["entries"]:
-                        if not entry:
-                            continue
-                        
-                        if "url" not in entry:
+                        if not entry or ("url" not in entry):
                             continue
 
                         song_info = {
@@ -96,20 +108,10 @@ def run_bot():
                             "webpage_url": entry.get("webpage_url", url)
                         }
 
-                        if message.guild.id not in music_queues:
-                            music_queues[message.guild.id] = asyncio.Queue()
-                        
-                        await music_queues[message.guild.id].put(song_info)
-
                         await message.channel.send(f"Added to queue: {song_info['title']}")
-                        
-                    voice_client = voice_clients.get(message.guild.id)
-                    if not voice_client or not voice_client.is_connected():
-                        voice_client = await message.author.voice.channel.connect()
-                        voice_clients[message.guild.id] = voice_client
-                    
-                    if not voice_client.is_playing():
-                        await play_next_song(message.guild.id)
+                        new_songs.append(song_info)
+
+                    await helper(message.guild.id, new_songs)
                 
                 else:
                     if not data.get("url"):
@@ -122,18 +124,15 @@ def run_bot():
                         "webpage_url": data.get("webpage_url", url)
                     }
 
-                    if message.guild.id not in music_queues:
-                        music_queues[message.guild.id] = asyncio.Queue()
+                    await helper(message.guild.id, [song_info])
 
-                    await music_queues[message.guild.id].put(song_info)
-
-                    voice_client = voice_clients.get(message.guild.id)
-                    if not voice_client or not voice_client.is_connected():
-                        voice_client = await message.author.voice.channel.connect()
-                        voice_clients[message.guild.id] = voice_client
-
-                    if not voice_client.is_playing():
-                        await play_next_song(message.guild.id)
+                voice_client = voice_clients.get(message.guild.id)
+                if not voice_client or not voice_client.is_connected():
+                    voice_client = await message.author.voice.channel.connect()
+                    voice_clients[message.guild.id] = voice_client
+                    
+                if not voice_client.is_playing():
+                    await play_next_song(message.guild.id)
       
             except Exception as e:
                 print(e)
