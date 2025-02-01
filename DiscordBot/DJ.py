@@ -82,49 +82,61 @@ def run_bot():
                     await message.channel.send("You must be in a voice channel to play music")
                     return
                 
-                parts = message.content.split()
+                command_text = message.content[len("?play"):].strip()
+                if not command_text:
+                    await message.channel.send("Please provide a song name and artist `?play`.")
+                    return
 
-                if (len(parts) < 2):
-                    await message.channel.send("Please provide a YouTube URL after `?play`")
-
-                url = parts[1]
-                processing_message = await message.channel.send("Processing link, please wait...")
-                loop = asyncio.get_event_loop()
+                if " by " in command_text.lower():
+                    song_name, artist_name = command_text.split(" by ", 1)
+                    song_name = song_name.strip()
+                    artist_name = artist_name.strip()
+                    search_query = f"ytsearch:{command_text} by {artist_name} lyrics"
+                else:
+                    search_query = f"ytsearch:{command_text}"
+                
+                processing_message = await message.channel.send(f"Searching for {command_text} on YouTube...")
+                loop = asyncio.get_running_loop()
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: ytdl.extract_info(search_query, download=False)
+                )
+                lyric_result = None
+                if "entries" in data and len(data["entries"]) > 0:
+                    for result in data["entries"]:
+                        title = result.get("title", "").lower()
+                        if "lyric" in title:
+                            lyric_result = result
+                            break
+                    if lyric_result is None:
+                        lyric_result = data["entries"][0]
+                    
+                    url = lyric_result["webpage_url"]
+                    title = lyric_result.get("title", "Unknown title")
+                    await processing_message.edit(content=f"Found song: `{title}\nNow adding to queue...`")
+                else:
+                    await message.channel.send("No search results found on YouTube")
+                    return
+                
                 data = await loop.run_in_executor(
                     None,
                     lambda: ytdl.extract_info(url, download=False)
                 )
-
-                if "entries" in data:
-                    await message.channel.send("Adding playlist to queue...")
-                    new_songs = []
-                    for entry in data["entries"]:
-                        if not entry or ("url" not in entry):
-                            continue
-
-                        song_info = {
-                            "title": entry.get("title", "Unknown title"),
-                            "url": entry.get("url", None),
-                            "webpage_url": entry.get("webpage_url", url)
-                        }
-
-                        await message.channel.send(f"Added to queue: {song_info['title']}")
-                        new_songs.append(song_info)
-
-                    await helper(message.guild.id, new_songs)
                 
-                else:
-                    if not data.get("url"):
-                        await message.channel.send("Error: Could not get a valid audio URL from link!")
+                if not data.get("url"):
+                    if "formats" in data and len(data["formats"]) > 0:
+                        data["url"] = data["formats"][0]["url"]
+                    else:
+                        await message.channel.send("Error: Could not retrieve valid audio URL from the search")
                         return
-
-                    song_info = {
-                        "title": data.get("title", "Unknown title"),
-                        "url": data.get("url", None),
-                        "webpage_url": data.get("webpage_url", url)
-                    }
-
-                    await helper(message.guild.id, [song_info])
+                    
+                song_info = {
+                    "title": data.get("title", "Unknown title"),
+                    "url": data.get("url", None),
+                    "webpage_url": data.get("webpage_url", url)
+                }
+                
+                await helper(message.guild.id, [song_info])
 
                 voice_client = voice_clients.get(message.guild.id)
                 if not voice_client or not voice_client.is_connected():
